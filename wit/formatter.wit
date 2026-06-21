@@ -1,0 +1,52 @@
+package kafq:formatter@0.1.0;
+
+/// Codec contract for kafq message formatters.
+///
+/// A plugin owns the translation between Kafka byte payloads and JSON values.
+/// The host owns Kafka I/O, partition/offset/timestamp metadata, and JSONL
+/// framing. Plugins should be referentially transparent: same input -> same
+/// output, no globals, no I/O.
+interface codec {
+    /// A Kafka record carried across the host/plugin boundary.
+    ///
+    /// On decode the host fills every field with the values it observed on
+    /// the wire. On encode the host fills `topic`; everything else is what
+    /// the plugin chose to emit, including an optional explicit partition.
+    record kafka-record {
+        topic: string,
+        /// On decode: the partition the message was read from.
+        /// On encode: -1 means "let the producer choose", otherwise the
+        /// plugin is requesting a specific partition.
+        partition: s32,
+        key: option<list<u8>>,
+        value: option<list<u8>>,
+        headers: list<tuple<string, list<u8>>>,
+        /// On decode: the broker-reported message timestamp in ms since epoch.
+        /// On encode: -1 (host does not read it).
+        timestamp: s64,
+    }
+
+    /// Result of decoding a single record.
+    ///
+    /// `json` carries a serialized JSON value (any shape: object, array,
+    /// scalar, null). The host writes that value into the JSONL output line.
+    /// `error` aborts the consume with the given message on stderr.
+    variant decoded {
+        json(string),
+        error(string),
+    }
+
+    /// Decode a Kafka record into a JSON value.
+    decode: func(rec: kafka-record) -> decoded;
+
+    /// Encode a single JSONL line (already parsed and re-serialized to JSON
+    /// text by the host) into a Kafka record ready to send to `topic`.
+    encode: func(json: string, topic: string) -> result<kafka-record, string>;
+
+    /// Plugin self-identification. Free-form; the host logs it on first use.
+    plugin-name: func() -> string;
+}
+
+world formatter {
+    export codec;
+}
