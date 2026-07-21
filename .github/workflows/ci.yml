@@ -122,5 +122,11 @@ jobs:
           key: ${{ matrix.os }}-${{ runner.arch }}-native-${{ matrix.target }}-rust-${{ needs.toolchain.outputs.rust_version }}-${{ hashFiles('Cargo.lock') }}
 
       - name: Build release binary
+        if: runner.os != 'Windows'
         shell: bash
         run: cargo build --release --locked --features wasm --target "$TARGET"
+
+      - name: Build release binary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: cargo build --release --locked --features wasm --target $env:TARGET
