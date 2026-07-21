@@ -19,11 +19,23 @@ use client::GlobalOptions;
 )]
 struct Cli {
     /// comma-separated list of bootstrap broker addresses
-    #[arg(short = 'b', long, env = "KAFKA_BROKERS", default_value = "localhost:9092", global = true)]
+    #[arg(
+        short = 'b',
+        long,
+        env = "KAFKA_BROKERS",
+        default_value = "localhost:9092",
+        global = true
+    )]
     brokers: String,
 
     /// operation timeout in milliseconds (0 = no timeout)
-    #[arg(short = 't', long, env = "KAFKA_TIMEOUT", default_value_t = 0, global = true)]
+    #[arg(
+        short = 't',
+        long,
+        env = "KAFKA_TIMEOUT",
+        default_value_t = 0,
+        global = true
+    )]
     timeout: u64,
 
     /// enable TLS connection

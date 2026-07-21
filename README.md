@@ -18,7 +18,9 @@ It is a single Rust binary built on librdkafka through [`rdkafka` 0.39.0](https:
 
 ## Build and install
 
-System requirements are a Rust toolchain, a C toolchain, CMake, OpenSSL headers, and zlib headers. SASL/GSSAPI and curl are built from vendored sources.
+[Tagged releases](https://github.com/3axap4eHko/kafq/releases) provide WebAssembly-enabled binaries for Windows x64, Linux x64, Linux ARM64, macOS Intel, and macOS Apple Silicon. Each release includes a `SHA256SUMS` file. Linux binaries use glibc.
+
+Building from source requires Rust 1.96.0, a C/C++ toolchain, CMake, Perl, and the platform's native build tools. OpenSSL, zlib, and curl are built from vendored sources.
 
 Build the default binary:
 
@@ -44,7 +46,7 @@ Include WebAssembly formatter support when installing:
 cargo install --path . --locked --features wasm
 ```
 
-The package uses Rust edition 2024. The optional `wasm` feature adds Wasmtime Component Model and WASI Preview 2 support. The `e2e` feature only enables broker-backed tests.
+The package uses Rust 1.96.0 and edition 2024. The optional `wasm` feature adds Wasmtime Component Model and WASI Preview 2 support. The `e2e` feature only enables broker-backed tests.
 
 ## Global options
 

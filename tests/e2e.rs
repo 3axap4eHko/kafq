@@ -14,7 +14,10 @@ fn brokers() -> String {
 }
 
 fn now_millis() -> u128 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis()
 }
 
 fn cli(args: &[&str]) -> String {
@@ -56,7 +59,12 @@ fn cli_with_stdin(args: &[&str], input: &str) {
         .stderr(Stdio::piped())
         .spawn()
         .expect("failed to spawn kafq");
-    child.stdin.as_mut().unwrap().write_all(input.as_bytes()).unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
     drop(child.stdin.take());
     let output = child.wait_with_output().expect("failed to wait for kafq");
     if !output.status.success() {
@@ -72,7 +80,9 @@ fn parse_jsonl(s: &str) -> Vec<Value> {
     if s.is_empty() {
         return Vec::new();
     }
-    s.lines().map(|line| serde_json::from_str(line).unwrap()).collect()
+    s.lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
 }
 
 struct ScopedTopic {
@@ -122,7 +132,9 @@ fn flatten(batches: &[Value]) -> Vec<Value> {
 fn cli_e2e_full_lifecycle() {
     let test_topic = format!("e2e-test-{}", now_millis());
     let test_group = format!("e2e-group-{}", now_millis());
-    let _topic_guard = ScopedTopic { name: test_topic.clone() };
+    let _topic_guard = ScopedTopic {
+        name: test_topic.clone(),
+    };
     let tmp = tmp_dir();
 
     // metadata
@@ -134,8 +146,13 @@ fn cli_e2e_full_lifecycle() {
         assert!(m.contains_key("brokers"));
         let cluster_id = m["clusterId"].as_str().expect("clusterId is a string");
         assert!(!cluster_id.is_empty(), "clusterId must not be empty");
-        let controller_id = m["controllerId"].as_i64().expect("controllerId is an integer");
-        assert!(controller_id >= 0, "controllerId must be a real broker id, got {controller_id}");
+        let controller_id = m["controllerId"]
+            .as_i64()
+            .expect("controllerId is an integer");
+        assert!(
+            controller_id >= 0,
+            "controllerId must be a real broker id, got {controller_id}"
+        );
         let brokers = m["brokers"].as_array().expect("brokers is array");
         assert!(!brokers.is_empty());
         let b0 = obj(&brokers[0]);
@@ -183,7 +200,12 @@ fn cli_e2e_full_lifecycle() {
 
         let broker_cfg = parse_jsonl(&cli(&["config", "-r", "broker", "-n", "1"]));
         assert!(!broker_cfg.is_empty());
-        assert!(!obj(&broker_cfg[0])["configs"].as_array().unwrap().is_empty());
+        assert!(
+            !obj(&broker_cfg[0])["configs"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
     }
 
     // produce — single message (offset 0)
@@ -223,18 +245,31 @@ fn cli_e2e_full_lifecycle() {
     // produce — raw + wait (smoke only)
     cli_with_stdin(
         &["produce", "-d", "raw"],
-        &format!(r#"{{"topic":"{test_topic}","messages":[{{"key":"raw-key","value":"raw-value"}}]}}"#),
+        &format!(
+            r#"{{"topic":"{test_topic}","messages":[{{"key":"raw-key","value":"raw-value"}}]}}"#
+        ),
     );
     cli_with_stdin(
         &["produce", "--wait", "10"],
-        &format!(r#"{{"topic":"{test_topic}","messages":[{{"key":"wait-key","value":"wait-value"}}]}}"#),
+        &format!(
+            r#"{{"topic":"{test_topic}","messages":[{{"key":"wait-key","value":"wait-value"}}]}}"#
+        ),
     );
 
     // consume — from beginning, 4 messages
     {
         let group = format!("{test_group}-from0");
         let batches = parse_jsonl(&cli(&[
-            "-t", "10000", "consume", &test_topic, "-g", &group, "--from", "0", "--count", "4",
+            "-t",
+            "10000",
+            "consume",
+            &test_topic,
+            "-g",
+            &group,
+            "--from",
+            "0",
+            "--count",
+            "4",
         ]));
         let messages = flatten(&batches);
         assert_eq!(messages.len(), 4);
@@ -255,7 +290,18 @@ fn cli_e2e_full_lifecycle() {
     {
         let group = format!("{test_group}-skip");
         let messages = flatten(&parse_jsonl(&cli(&[
-            "-t", "10000", "consume", &test_topic, "-g", &group, "--from", "0", "--skip", "2", "--count", "2",
+            "-t",
+            "10000",
+            "consume",
+            &test_topic,
+            "-g",
+            &group,
+            "--from",
+            "0",
+            "--skip",
+            "2",
+            "--count",
+            "2",
         ])));
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0]["key"].as_str(), Some("key-1"));
@@ -268,7 +314,16 @@ fn cli_e2e_full_lifecycle() {
         let past_iso = format_iso(past_ms);
         let group = format!("{test_group}-iso");
         let messages = flatten(&parse_jsonl(&cli(&[
-            "-t", "10000", "consume", &test_topic, "-g", &group, "--from", &past_iso, "--count", "1",
+            "-t",
+            "10000",
+            "consume",
+            &test_topic,
+            "-g",
+            &group,
+            "--from",
+            &past_iso,
+            "--count",
+            "1",
         ])));
         assert_eq!(messages.len(), 1);
         let m = obj(&messages[0]);
@@ -281,8 +336,18 @@ fn cli_e2e_full_lifecycle() {
         let out = tmp.join("consume-output.json");
         let group = format!("{test_group}-file");
         cli(&[
-            "-t", "10000", "consume", &test_topic, "-g", &group, "--from", "0", "--count", "2",
-            "--output", out.to_str().unwrap(),
+            "-t",
+            "10000",
+            "consume",
+            &test_topic,
+            "-g",
+            &group,
+            "--from",
+            "0",
+            "--count",
+            "2",
+            "--output",
+            out.to_str().unwrap(),
         ]);
         assert!(out.exists(), "output file missing");
         let messages = flatten(&parse_jsonl(read_file(&out).trim()));
@@ -294,7 +359,18 @@ fn cli_e2e_full_lifecycle() {
     {
         let group = format!("{test_group}-raw");
         let messages = flatten(&parse_jsonl(&cli(&[
-            "-t", "10000", "consume", &test_topic, "-g", &group, "--from", "0", "--count", "1", "-d", "raw",
+            "-t",
+            "10000",
+            "consume",
+            &test_topic,
+            "-g",
+            &group,
+            "--from",
+            "0",
+            "--count",
+            "1",
+            "-d",
+            "raw",
         ])));
         assert_eq!(messages.len(), 1);
         let m = obj(&messages[0]);
@@ -306,7 +382,18 @@ fn cli_e2e_full_lifecycle() {
     {
         let group = format!("{test_group}-headers");
         let messages = flatten(&parse_jsonl(&cli(&[
-            "-t", "10000", "consume", &test_topic, "-g", &group, "--from", "0", "--skip", "4", "--count", "1",
+            "-t",
+            "10000",
+            "consume",
+            &test_topic,
+            "-g",
+            &group,
+            "--from",
+            "0",
+            "--skip",
+            "4",
+            "--count",
+            "1",
         ])));
         assert_eq!(messages.len(), 1);
         let m = obj(&messages[0]);
@@ -320,7 +407,18 @@ fn cli_e2e_full_lifecycle() {
     {
         let group = format!("{test_group}-fileinput");
         let messages = flatten(&parse_jsonl(&cli(&[
-            "-t", "10000", "consume", &test_topic, "-g", &group, "--from", "0", "--skip", "5", "--count", "2",
+            "-t",
+            "10000",
+            "consume",
+            &test_topic,
+            "-g",
+            &group,
+            "--from",
+            "0",
+            "--skip",
+            "5",
+            "--count",
+            "2",
         ])));
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0]["key"].as_str(), Some("file-key-0"));
@@ -330,7 +428,9 @@ fn cli_e2e_full_lifecycle() {
     // consume timeout — fresh group on a brand-new empty topic
     {
         let empty_topic = format!("e2e-empty-{}", now_millis());
-        let _g = ScopedTopic { name: empty_topic.clone() };
+        let _g = ScopedTopic {
+            name: empty_topic.clone(),
+        };
         cli(&["topic:create", &empty_topic]);
         let group = format!("{test_group}-timeout");
         let (code, _stdout, stderr) =
@@ -344,8 +444,16 @@ fn cli_e2e_full_lifecycle() {
         let group = format!("{test_group}-sigint");
         let child: Child = Command::new(KAFQ)
             .args([
-                "-b", &brokers(),
-                "consume", &test_topic, "-g", &group, "--from", "0", "--count", "1",
+                "-b",
+                &brokers(),
+                "consume",
+                &test_topic,
+                "-g",
+                &group,
+                "--from",
+                "0",
+                "--count",
+                "1",
             ])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -405,7 +513,10 @@ fn cli_e2e_full_lifecycle() {
             .into_iter()
             .filter_map(|v| v.as_str().map(String::from))
             .collect();
-        assert!(!topics.contains(&test_topic), "topic still present after delete");
+        assert!(
+            !topics.contains(&test_topic),
+            "topic still present after delete"
+        );
     }
 }
 
@@ -422,5 +533,7 @@ unsafe extern "C" {
 }
 
 unsafe fn libc_kill(pid: i32, sig: i32) {
-    unsafe { let _ = kill(pid, sig); }
+    unsafe {
+        let _ = kill(pid, sig);
+    }
 }

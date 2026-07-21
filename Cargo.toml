@@ -2,8 +2,10 @@
 name = "kafq"
 version = "0.0.1"
 edition = "2024"
+rust-version = "1.96.0"
 description = "Apache Kafka CLI: produce, consume, admin (topics, configs, offsets, copy, dump)"
 license = "MIT"
+repository = "https://github.com/3axap4eHko/kafq"
 keywords = ["kafka", "cli", "rdkafka", "consumer", "producer"]
 categories = ["command-line-utilities"]
 readme = "README.md"
@@ -14,7 +16,7 @@ e2e = []
 wasm = ["dep:wasmtime", "dep:wasmtime-wasi"]
 
 [dependencies]
-rdkafka = { version = "=0.39.0", default-features = false, features = ["tokio", "cmake-build", "libz", "ssl", "gssapi-vendored", "curl-static"] }
+rdkafka = { version = "=0.39.0", default-features = false, features = ["tokio", "cmake-build", "libz-static", "ssl-vendored", "curl-static"] }
 clap = { version = "=4.6.1", features = ["derive", "env", "wrap_help"] }
 tokio = { version = "=1.52.3", features = ["macros", "rt-multi-thread", "fs", "io-std", "io-util", "signal", "time"] }
 serde = { version = "=1.0.228", features = ["derive"] }

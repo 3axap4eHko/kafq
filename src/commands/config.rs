@@ -92,10 +92,7 @@ pub async fn run(globals: GlobalOptions, args: Args) -> Result<i32> {
                     .into_iter()
                     .map(|entry| ConfigEntry {
                         name: entry.name,
-                        value: entry
-                            .value
-                            .map(Value::String)
-                            .unwrap_or(Value::Null),
+                        value: entry.value.map(Value::String).unwrap_or(Value::Null),
                         read_only: entry.is_read_only,
                         is_default: entry.is_default,
                         sensitive: entry.is_sensitive,

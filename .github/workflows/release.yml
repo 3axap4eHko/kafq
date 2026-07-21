@@ -1,0 +1,184 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  metadata:
+    name: Validate release metadata
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      rust_version: ${{ steps.metadata.outputs.rust_version }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Read and validate Cargo metadata
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          metadata="$(cargo metadata --locked --no-deps --format-version 1)"
+          rust_version="$(jq -r '.packages[] | select(.name == "kafq") | .rust_version' <<< "$metadata")"
+          package_version="$(jq -r '.packages[] | select(.name == "kafq") | .version' <<< "$metadata")"
+          if [[ ! "$rust_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Cargo.toml must define package.rust-version as a full stable version" >&2
+            exit 1
+          fi
+          if [[ "$GITHUB_REF_NAME" != "v$package_version" ]]; then
+            echo "Tag $GITHUB_REF_NAME does not match Cargo.toml version $package_version" >&2
+            exit 1
+          fi
+          printf 'rust_version=%s\n' "$rust_version" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build (${{ matrix.label }})
+    needs: metadata
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux x64
+            os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            artifact: kafq-x86_64-unknown-linux-gnu
+          - label: Linux ARM64
+            os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            artifact: kafq-aarch64-unknown-linux-gnu
+          - label: Windows x64
+            os: windows-2022
+            target: x86_64-pc-windows-msvc
+            artifact: kafq-x86_64-pc-windows-msvc
+          - label: macOS Intel
+            os: macos-15-intel
+            target: x86_64-apple-darwin
+            artifact: kafq-x86_64-apple-darwin
+          - label: macOS Apple Silicon
+            os: macos-15
+            target: aarch64-apple-darwin
+            artifact: kafq-aarch64-apple-darwin
+    env:
+      RUSTUP_TOOLCHAIN: ${{ needs.metadata.outputs.rust_version }}
+      TARGET: ${{ matrix.target }}
+      ARTIFACT: ${{ matrix.artifact }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+          rustup target add "$TARGET" --toolchain "$RUSTUP_TOOLCHAIN"
+
+      - name: Cache Cargo
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ matrix.os }}-${{ runner.arch }}-native-${{ matrix.target }}-rust-${{ needs.metadata.outputs.rust_version }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Build release binary
+        shell: bash
+        run: cargo build --release --locked --features wasm --target "$TARGET"
+
+      - name: Package archive
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          staging="dist/$ARTIFACT"
+          mkdir -p "$staging"
+          cp "target/$TARGET/release/kafq" "$staging/kafq"
+          cp README.md "$staging/README.md"
+          tar -C dist -czf "dist/$ARTIFACT.tar.gz" "$ARTIFACT"
+
+      - name: Package archive
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $staging = Join-Path 'dist' $env:ARTIFACT
+          New-Item $staging -ItemType Directory -Force | Out-Null
+          Copy-Item "target/$env:TARGET/release/kafq.exe" "$staging/kafq.exe"
+          Copy-Item 'README.md' "$staging/README.md"
+          Compress-Archive -Path "$staging/*" -DestinationPath "dist/$env:ARTIFACT.zip" -Force
+
+      - name: Upload archive
+        if: runner.os != 'Windows'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Upload archive
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}.zip
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  release:
+    name: Publish release
+    needs: [metadata, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t archives < <(find artifacts -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) -printf '%f\n' | sort)
+          if [[ "${#archives[@]}" -ne 5 ]]; then
+            echo "Expected 5 release archives, found ${#archives[@]}" >&2
+            exit 1
+          fi
+          cd artifacts
+          sha256sum -- "${archives[@]}" > SHA256SUMS
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG_NAME: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if state="$(gh release view "$TAG_NAME" --json isDraft --jq '.isDraft' 2>/dev/null)"; then
+            if [[ "$state" != "true" ]]; then
+              echo "Release $TAG_NAME is already published" >&2
+              exit 1
+            fi
+          else
+            gh release create "$TAG_NAME" --draft --verify-tag --title "Release $TAG_NAME" --generate-notes
+          fi
+          gh release upload "$TAG_NAME" artifacts/* --clobber
+          gh release edit "$TAG_NAME" --draft=false --latest

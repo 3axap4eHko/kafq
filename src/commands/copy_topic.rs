@@ -207,7 +207,9 @@ pub async fn run(globals: GlobalOptions, args: Args) -> Result<i32> {
 
     let mut timeout_fut: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> =
         if globals.timeout_ms > 0 {
-            Box::pin(tokio::time::sleep(Duration::from_millis(globals.timeout_ms)))
+            Box::pin(tokio::time::sleep(Duration::from_millis(
+                globals.timeout_ms,
+            )))
         } else {
             Box::pin(std::future::pending())
         };

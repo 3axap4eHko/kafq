@@ -153,7 +153,11 @@ pub fn build_client_config(opts: &GlobalOptions) -> Result<ClientConfig> {
                 config.set("sasl.password", p);
             }
         }
-        sasl_protocol = Some(if opts.ssl { "SASL_SSL" } else { "SASL_PLAINTEXT" });
+        sasl_protocol = Some(if opts.ssl {
+            "SASL_SSL"
+        } else {
+            "SASL_PLAINTEXT"
+        });
     } else if static_oauth.is_some() || oidc_requested {
         bail!("OAuth options require --mechanism oauthbearer");
     }

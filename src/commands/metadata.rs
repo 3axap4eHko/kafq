@@ -66,7 +66,10 @@ pub async fn run(globals: GlobalOptions) -> Result<i32> {
     let consumer = create_base_consumer(&config, &globals)?;
     let timeout = globals.operation_timeout();
     let meta = consumer.fetch_metadata(None, timeout)?;
-    let cluster_id = consumer.client().fetch_cluster_id(timeout).unwrap_or_default();
+    let cluster_id = consumer
+        .client()
+        .fetch_cluster_id(timeout)
+        .unwrap_or_default();
     let controller_id = fetch_controller_id(consumer.client(), timeout.as_millis() as i32);
 
     let brokers = meta

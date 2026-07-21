@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  toolchain:
+    name: Resolve Rust toolchain
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      rust_version: ${{ steps.metadata.outputs.rust_version }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Read Cargo metadata
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          rust_version="$(cargo metadata --locked --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "kafq") | .rust_version')"
+          if [[ ! "$rust_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Cargo.toml must define package.rust-version as a full stable version" >&2
+            exit 1
+          fi
+          printf 'rust_version=%s\n' "$rust_version" >> "$GITHUB_OUTPUT"
+
+  quality:
+    name: Quality
+    needs: toolchain
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      RUSTUP_TOOLCHAIN: ${{ needs.toolchain.outputs.rust_version }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Rust
+        shell: bash
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
+
+      - name: Cache Cargo
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ runner.arch }}-quality-rust-${{ needs.toolchain.outputs.rust_version }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run default tests
+        run: cargo test --locked --no-default-features
+
+      - name: Run WebAssembly tests
+        run: cargo test --locked --features wasm
+
+      - name: Run Clippy
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+
+  platform-build:
+    name: Build (${{ matrix.label }})
+    needs: toolchain
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux x64
+            os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - label: Linux ARM64
+            os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - label: Windows x64
+            os: windows-2022
+            target: x86_64-pc-windows-msvc
+          - label: macOS Intel
+            os: macos-15-intel
+            target: x86_64-apple-darwin
+          - label: macOS Apple Silicon
+            os: macos-15
+            target: aarch64-apple-darwin
+    env:
+      RUSTUP_TOOLCHAIN: ${{ needs.toolchain.outputs.rust_version }}
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+          rustup target add "$TARGET" --toolchain "$RUSTUP_TOOLCHAIN"
+
+      - name: Cache Cargo
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ matrix.os }}-${{ runner.arch }}-native-${{ matrix.target }}-rust-${{ needs.toolchain.outputs.rust_version }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Build release binary
+        shell: bash
+        run: cargo build --release --locked --features wasm --target "$TARGET"

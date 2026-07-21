@@ -34,7 +34,6 @@ impl DecodedRecord {
             }
         }
     }
-
 }
 
 /// Plugin output for a single produced record.
@@ -137,7 +136,10 @@ fn builtin_decode_object(
     Ok(Value::Object(obj))
 }
 
-fn builtin_encode(line: &Value, encode_value: impl Fn(&Value) -> Result<Vec<u8>>) -> Result<EncodedRecord> {
+fn builtin_encode(
+    line: &Value,
+    encode_value: impl Fn(&Value) -> Result<Vec<u8>>,
+) -> Result<EncodedRecord> {
     let envelope = match line {
         Value::Object(obj) => obj,
         _ => {
@@ -147,9 +149,9 @@ fn builtin_encode(line: &Value, encode_value: impl Fn(&Value) -> Result<Vec<u8>>
         }
     };
 
-    let value_field = envelope.get("value").ok_or_else(|| {
-        anyhow!("produce input line is missing the required `value` field")
-    })?;
+    let value_field = envelope
+        .get("value")
+        .ok_or_else(|| anyhow!("produce input line is missing the required `value` field"))?;
     let value_bytes = encode_value(value_field)?;
 
     let key_bytes = envelope.get("key").and_then(value_to_bytes);

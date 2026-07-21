@@ -9,4 +9,3 @@ pub fn write_jsonl<W: Write + ?Sized, T: Serialize>(out: &mut W, value: &T) -> R
     out.write_all(b"\n")?;
     Ok(())
 }
-

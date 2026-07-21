@@ -14,7 +14,10 @@ fn brokers() -> String {
 }
 
 fn now_millis() -> u128 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis()
 }
 
 fn cli(args: &[&str]) -> String {
@@ -43,7 +46,12 @@ fn cli_with_stdin(args: &[&str], input: &str) {
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn kafq");
-    child.stdin.as_mut().unwrap().write_all(input.as_bytes()).unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
     drop(child.stdin.take());
     let output = child.wait_with_output().expect("wait kafq");
     if !output.status.success() {
@@ -59,7 +67,9 @@ fn parse_jsonl(s: &str) -> Vec<Value> {
     if s.is_empty() {
         return Vec::new();
     }
-    s.lines().map(|line| serde_json::from_str(line).unwrap()).collect()
+    s.lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
 }
 
 fn flatten(batches: &[Value]) -> Vec<Value> {
@@ -115,7 +125,9 @@ fn wasm_formatter_roundtrip() {
     let wasm = wasm.to_str().expect("wasm path is utf-8");
 
     let topic = format!("e2e-wasm-{}", now_millis());
-    let _guard = ScopedTopic { name: topic.clone() };
+    let _guard = ScopedTopic {
+        name: topic.clone(),
+    };
     cli(&["topic:create", &topic]);
 
     cli_with_stdin(
@@ -124,7 +136,13 @@ fn wasm_formatter_roundtrip() {
     );
 
     let messages = flatten(&parse_jsonl(&cli(&[
-        "-t", "10000", "consume", &topic, "--snapshot", "-d", wasm,
+        "-t",
+        "10000",
+        "consume",
+        &topic,
+        "--snapshot",
+        "-d",
+        wasm,
     ])));
     assert_eq!(messages.len(), 1);
     let m = messages[0].as_object().unwrap();
