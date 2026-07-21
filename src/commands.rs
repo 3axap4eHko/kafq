@@ -69,6 +69,23 @@ enum SnapshotStop {
     Sigterm,
 }
 
+#[cfg(unix)]
+async fn shutdown_signal() -> Result<SnapshotStop> {
+    let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
+    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+
+    tokio::select! {
+        _ = sigint.recv() => Ok(SnapshotStop::Sigint),
+        _ = sigterm.recv() => Ok(SnapshotStop::Sigterm),
+    }
+}
+
+#[cfg(windows)]
+async fn shutdown_signal() -> Result<SnapshotStop> {
+    tokio::signal::ctrl_c().await?;
+    Ok(SnapshotStop::Sigint)
+}
+
 impl SnapshotStop {
     fn exit_code(self) -> i32 {
         match self {

@@ -12,12 +12,11 @@ use rdkafka::consumer::{BaseConsumer, Consumer};
 use rdkafka::error::KafkaError;
 use rdkafka::message::Headers;
 use serde_json::{Map, Value};
-use tokio::signal::unix::{SignalKind, signal};
 
 use crate::client::{
     GlobalOptions, build_client_config, create_base_consumer, create_stream_consumer,
 };
-use crate::commands::{now_millis, partition_offset, start_offset};
+use crate::commands::{now_millis, partition_offset, shutdown_signal, start_offset};
 use crate::formatter::{Formatter, RecordView};
 use crate::output::write_jsonl;
 use crate::timestamp::parse_timestamp_ms;
@@ -351,8 +350,8 @@ pub async fn run(globals: GlobalOptions, args: Args) -> Result<i32> {
     let mut buckets: BTreeMap<i32, Vec<Value>> = BTreeMap::new();
     let mut index: u64 = 0;
     let mut timed_out = false;
-    let mut sigint = signal(SignalKind::interrupt())?;
-    let mut sigterm = signal(SignalKind::terminate())?;
+    let shutdown = shutdown_signal();
+    tokio::pin!(shutdown);
     let mut stream = consumer.stream();
     let mut timeout_fut: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> =
         if globals.timeout_ms > 0 {
@@ -369,8 +368,10 @@ pub async fn run(globals: GlobalOptions, args: Args) -> Result<i32> {
                 timed_out = true;
                 break;
             }
-            _ = sigint.recv() => break,
-            _ = sigterm.recv() => break,
+            result = &mut shutdown => {
+                result?;
+                break;
+            }
             maybe = stream.next() => {
                 let mut stop = match maybe {
                     Some(Ok(m)) => matches!(

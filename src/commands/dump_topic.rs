@@ -17,7 +17,7 @@ use serde_json::{Map, Value};
 use crate::client::{
     GlobalOptions, build_client_config, create_base_consumer, create_stream_consumer,
 };
-use crate::commands::{SnapshotStop, now_millis, partition_offset, start_offset};
+use crate::commands::{SnapshotStop, now_millis, partition_offset, shutdown_signal, start_offset};
 use crate::output::write_jsonl;
 use crate::timestamp::parse_timestamp_ms;
 
@@ -157,8 +157,8 @@ pub async fn run(globals: GlobalOptions, args: Args) -> Result<i32> {
     let mut total: u64 = 0;
     let mut stream = consumer.stream();
 
-    let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
-    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    let shutdown = shutdown_signal();
+    tokio::pin!(shutdown);
 
     let mut timeout_fut: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> =
         if globals.timeout_ms > 0 {
@@ -172,8 +172,7 @@ pub async fn run(globals: GlobalOptions, args: Args) -> Result<i32> {
     let stop = loop {
         tokio::select! {
             _ = &mut timeout_fut => break SnapshotStop::Timeout,
-            _ = sigint.recv() => break SnapshotStop::Sigint,
-            _ = sigterm.recv() => break SnapshotStop::Sigterm,
+            result = &mut shutdown => break result?,
             maybe = stream.next() => {
                 let message = match maybe {
                     Some(Ok(m)) => m,

@@ -101,11 +101,11 @@ Static OAUTHBEARER and OIDC options are mutually exclusive. OAuth options are re
 
 | Code | Meaning |
 | --- | --- |
-| `0` | Command completed successfully; `consume` also uses 0 after a handled `SIGINT` or `SIGTERM` |
+| `0` | Command completed successfully; `consume` also uses 0 after Unix `SIGINT`/`SIGTERM` or Windows Ctrl+C |
 | `1` | Runtime error or streaming timeout; timed-out stream commands print `TIMEOUT` to stderr |
 | `2` | Command-line parsing or value-validation error from Clap |
-| `130` | `topic:copy` or `topic:dump` flushed pending data after `SIGINT`, but the snapshot is incomplete |
-| `143` | `topic:copy` or `topic:dump` flushed pending data after `SIGTERM`, but the snapshot is incomplete |
+| `130` | `topic:copy` or `topic:dump` flushed pending data after Unix `SIGINT` or Windows Ctrl+C, but the snapshot is incomplete |
+| `143` | `topic:copy` or `topic:dump` flushed pending data after Unix `SIGTERM`, but the snapshot is incomplete |
 
 ## JSONL and data formats
 
@@ -270,7 +270,7 @@ Consumes from every topic partition using explicit assignments and writes partit
 
 `--snapshot` defaults `--from` to `0` when no explicit start is given. Messages appended after the startup watermarks are excluded. Reactive batching collects only records already ready in the local stream, so a quiet topic can produce one message per line.
 
-A nonzero global timeout prints `TIMEOUT`, flushes buffered JSONL, and exits 1. `SIGINT` and `SIGTERM` flush buffered JSONL and exit 0.
+A nonzero global timeout prints `TIMEOUT`, flushes buffered JSONL, and exits 1. Unix `SIGINT`/`SIGTERM` and Windows Ctrl+C flush buffered JSONL and exit 0.
 
 ### `kafq produce [options]`
 
