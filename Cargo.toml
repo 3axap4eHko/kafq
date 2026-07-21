@@ -1,6 +1,6 @@
 [package]
 name = "kafq"
-version = "0.0.0"
+version = "0.0.1"
 edition = "2024"
 description = "Apache Kafka CLI: produce, consume, admin (topics, configs, offsets, copy, dump)"
 license = "MIT"
