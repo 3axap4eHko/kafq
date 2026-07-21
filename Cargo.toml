@@ -14,16 +14,16 @@ e2e = []
 wasm = ["dep:wasmtime", "dep:wasmtime-wasi"]
 
 [dependencies]
-rdkafka = { version = "0.39.0", default-features = false, features = ["tokio", "cmake-build", "libz", "ssl", "gssapi-vendored", "curl-static"] }
-clap = { version = "4.6.1", features = ["derive", "env", "wrap_help"] }
-tokio = { version = "1.52.3", features = ["macros", "rt-multi-thread", "fs", "io-std", "io-util", "signal", "time"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["preserve_order"] }
-anyhow = "1"
-chrono = { version = "0.4", default-features = false, features = ["clock"] }
-futures = "0.3"
-wasmtime = { version = "44", optional = true, default-features = false, features = ["component-model", "cranelift", "runtime"] }
-wasmtime-wasi = { version = "44", optional = true, default-features = false, features = ["p2"] }
+rdkafka = { version = "=0.39.0", default-features = false, features = ["tokio", "cmake-build", "libz", "ssl", "gssapi-vendored", "curl-static"] }
+clap = { version = "=4.6.1", features = ["derive", "env", "wrap_help"] }
+tokio = { version = "=1.52.3", features = ["macros", "rt-multi-thread", "fs", "io-std", "io-util", "signal", "time"] }
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = { version = "=1.0.149", features = ["preserve_order"] }
+anyhow = "=1.0.102"
+chrono = { version = "=0.4.44", default-features = false, features = ["clock"] }
+futures = "=0.3.32"
+wasmtime = { version = "=44.0.1", optional = true, default-features = false, features = ["component-model", "cranelift", "runtime"] }
+wasmtime-wasi = { version = "=44.0.1", optional = true, default-features = false, features = ["p2"] }
 
 [profile.release]
 lto = "thin"

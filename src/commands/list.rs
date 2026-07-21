@@ -2,9 +2,9 @@ use std::io::stdout;
 
 use anyhow::Result;
 use clap::Args as ClapArgs;
-use rdkafka::consumer::{BaseConsumer, Consumer};
+use rdkafka::consumer::Consumer;
 
-use crate::client::{GlobalOptions, build_client_config};
+use crate::client::{GlobalOptions, build_client_config, create_base_consumer};
 use crate::output::write_jsonl;
 
 #[derive(ClapArgs)]
@@ -16,7 +16,7 @@ pub struct Args {
 
 pub async fn run(globals: GlobalOptions, args: Args) -> Result<i32> {
     let config = build_client_config(&globals)?;
-    let consumer: BaseConsumer = config.create()?;
+    let consumer = create_base_consumer(&config, &globals)?;
     let metadata = consumer.fetch_metadata(None, globals.operation_timeout())?;
 
     let mut out = stdout().lock();

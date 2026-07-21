@@ -3,11 +3,11 @@ use std::io::stdout;
 use anyhow::Result;
 use rdkafka::bindings as rdsys;
 use rdkafka::client::Client;
-use rdkafka::consumer::{BaseConsumer, Consumer};
+use rdkafka::consumer::Consumer;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::client::{GlobalOptions, build_client_config};
+use crate::client::{GlobalOptions, build_client_config, create_base_consumer};
 use crate::output::write_jsonl;
 
 fn fetch_controller_id<C>(client: &Client<C>, timeout_ms: i32) -> i32
@@ -63,7 +63,7 @@ struct MetadataOutput {
 
 pub async fn run(globals: GlobalOptions) -> Result<i32> {
     let config = build_client_config(&globals)?;
-    let consumer: BaseConsumer = config.create()?;
+    let consumer = create_base_consumer(&config, &globals)?;
     let timeout = globals.operation_timeout();
     let meta = consumer.fetch_metadata(None, timeout)?;
     let cluster_id = consumer.client().fetch_cluster_id(timeout).unwrap_or_default();

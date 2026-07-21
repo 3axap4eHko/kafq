@@ -47,8 +47,38 @@ struct Cli {
     password: Option<String>,
 
     /// SASL OAuth bearer token (static; mutually exclusive with --oidc-*)
-    #[arg(long, env = "KAFKA_OAUTH_BEARER", global = true)]
+    #[arg(
+        long,
+        env = "KAFKA_OAUTH_BEARER",
+        global = true,
+        requires_all = ["oauth_principal", "oauth_expiry_ms"],
+        conflicts_with_all = [
+            "oidc_token_url",
+            "oidc_client_id",
+            "oidc_client_secret",
+            "oidc_scope",
+            "oidc_extensions"
+        ]
+    )]
     oauth_bearer: Option<String>,
+
+    /// Kafka principal associated with a static OAUTHBEARER token
+    #[arg(
+        long,
+        env = "KAFKA_OAUTH_PRINCIPAL",
+        global = true,
+        requires = "oauth_bearer"
+    )]
+    oauth_principal: Option<String>,
+
+    /// static OAUTHBEARER token expiration as Unix milliseconds
+    #[arg(
+        long,
+        env = "KAFKA_OAUTH_EXPIRY_MS",
+        global = true,
+        requires = "oauth_bearer"
+    )]
+    oauth_expiry_ms: Option<i64>,
 
     /// OIDC token endpoint URL (enables OAUTHBEARER OIDC flow)
     #[arg(long, env = "KAFKA_OIDC_TOKEN_URL", global = true)]
@@ -85,6 +115,8 @@ impl Cli {
             username: self.username.clone(),
             password: self.password.clone(),
             oauth_bearer: self.oauth_bearer.clone(),
+            oauth_principal: self.oauth_principal.clone(),
+            oauth_expiry_ms: self.oauth_expiry_ms,
             oidc_token_url: self.oidc_token_url.clone(),
             oidc_client_id: self.oidc_client_id.clone(),
             oidc_client_secret: self.oidc_client_secret.clone(),
@@ -157,6 +189,66 @@ async fn run() -> Result<i32> {
             let mut out = std::io::stdout().lock();
             out.write_all(commands::contract::WIT)?;
             Ok(0)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+    use clap::error::ErrorKind;
+
+    use super::Cli;
+
+    #[test]
+    fn zero_count_is_rejected_for_message_commands() {
+        let cases: &[&[&str]] = &[
+            &["kafq", "consume", "source", "--count", "0"],
+            &["kafq", "topic:copy", "source", "dest", "--count", "0"],
+            &[
+                "kafq",
+                "topic:dump",
+                "source",
+                "--output",
+                "dump.jsonl",
+                "--count",
+                "0",
+            ],
+        ];
+
+        for args in cases {
+            let error = match Cli::try_parse_from(*args) {
+                Ok(_) => panic!("zero count was accepted for {args:?}"),
+                Err(error) => error,
+            };
+
+            assert_eq!(error.kind(), ErrorKind::ValueValidation);
+        }
+    }
+
+    #[test]
+    fn positive_and_omitted_counts_are_accepted() {
+        let cases: &[&[&str]] = &[
+            &["kafq", "consume", "source"],
+            &["kafq", "consume", "source", "--count", "1"],
+            &["kafq", "topic:copy", "source", "dest"],
+            &["kafq", "topic:copy", "source", "dest", "--count", "1"],
+            &["kafq", "topic:dump", "source", "--output", "dump.jsonl"],
+            &[
+                "kafq",
+                "topic:dump",
+                "source",
+                "--output",
+                "dump.jsonl",
+                "--count",
+                "1",
+            ],
+        ];
+
+        for args in cases {
+            if let Err(error) = Cli::try_parse_from(*args) {
+                panic!("valid count was rejected for {args:?}: {error}");
+            }
         }
     }
 }

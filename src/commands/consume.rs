@@ -4,18 +4,20 @@ use std::time::Duration;
 
 use anyhow::{Result, anyhow};
 use clap::Args as ClapArgs;
-use futures::{FutureExt, StreamExt};
+use futures::{FutureExt, Stream, StreamExt};
 use rdkafka::Message;
 use rdkafka::Offset;
 use rdkafka::TopicPartitionList;
-use rdkafka::consumer::{BaseConsumer, Consumer, StreamConsumer};
+use rdkafka::consumer::{BaseConsumer, Consumer};
 use rdkafka::error::KafkaError;
-use rdkafka::message::{BorrowedMessage, Headers};
+use rdkafka::message::Headers;
 use serde_json::{Map, Value};
 use tokio::signal::unix::{SignalKind, signal};
 
-use crate::client::{GlobalOptions, build_client_config};
-use crate::commands::{now_millis, start_offset};
+use crate::client::{
+    GlobalOptions, build_client_config, create_base_consumer, create_stream_consumer,
+};
+use crate::commands::{now_millis, partition_offset, start_offset};
 use crate::formatter::{Formatter, RecordView};
 use crate::output::write_jsonl;
 use crate::timestamp::parse_timestamp_ms;
@@ -36,8 +38,8 @@ pub struct Args {
     /// start consuming from a timestamp (ms), ISO 8601, or 0 for the beginning
     #[arg(short = 'f', long)]
     pub from: Option<String>,
-    /// maximum number of messages to consume
-    #[arg(short = 'c', long)]
+    /// maximum number of messages to consume (must be at least 1)
+    #[arg(short = 'c', long, value_parser = clap::value_parser!(u64).range(1..))]
     pub count: Option<u64>,
     /// number of messages to skip before outputting
     #[arg(short = 's', long, default_value_t = 0)]
@@ -57,6 +59,9 @@ fn list_partitions(consumer: &BaseConsumer, topic: &str, timeout: Duration) -> R
         .iter()
         .find(|t| t.name() == topic)
         .ok_or_else(|| anyhow!("Topic {topic} not found"))?;
+    if let Some(error) = topic_meta.error() {
+        return Err(anyhow!("Topic {topic} metadata error: {error:?}"));
+    }
     let mut ids: Vec<i32> = topic_meta.partitions().iter().map(|p| p.id()).collect();
     ids.sort_unstable();
     Ok(ids)
@@ -91,7 +96,7 @@ enum Flow {
     Stop,
 }
 
-fn decode_message(ctx: &Ctx<'_>, message: &BorrowedMessage<'_>) -> Result<Value> {
+fn decode_message<M: Message>(ctx: &Ctx<'_>, message: &M) -> Result<Value> {
     let partition = message.partition();
     let offset = message.offset();
     let high = ctx
@@ -164,9 +169,28 @@ fn flush_all(
     Ok(())
 }
 
-fn handle_message(
+fn drain_ready<S, F>(stream: &mut S, max_items: usize, mut handle: F) -> Result<bool>
+where
+    S: Stream + Unpin,
+    F: FnMut(S::Item) -> Result<bool>,
+{
+    for _ in 0..max_items {
+        match stream.next().now_or_never() {
+            Some(Some(item)) => {
+                if handle(item)? {
+                    return Ok(true);
+                }
+            }
+            Some(None) => return Ok(true),
+            None => return Ok(false),
+        }
+    }
+    Ok(false)
+}
+
+fn handle_message<M: Message>(
     ctx: &Ctx<'_>,
-    message: &BorrowedMessage<'_>,
+    message: &M,
     buckets: &mut BTreeMap<i32, Vec<Value>>,
     snapshot_remaining: &mut HashSet<i32>,
     index: &mut u64,
@@ -174,6 +198,18 @@ fn handle_message(
 ) -> Result<Flow> {
     let partition = message.partition();
     let offset = message.offset();
+
+    if ctx.snapshot
+        && let Some((_, high)) = ctx.watermarks.get(&partition)
+        && offset >= *high
+    {
+        snapshot_remaining.remove(&partition);
+        return Ok(if snapshot_remaining.is_empty() {
+            Flow::Stop
+        } else {
+            Flow::Continue
+        });
+    }
 
     if *index >= ctx.skip {
         let msg = decode_message(ctx, message)?;
@@ -227,7 +263,7 @@ pub async fn run(globals: GlobalOptions, args: Args) -> Result<i32> {
 
     let timeout = globals.operation_timeout();
 
-    let probe: BaseConsumer = config.create()?;
+    let probe = create_base_consumer(&config, &globals)?;
     let partitions = list_partitions(&probe, &args.topic, timeout)?;
     let watermarks = fetch_watermarks(&probe, &args.topic, &partitions, timeout)?;
     drop(probe);
@@ -256,13 +292,15 @@ pub async fn run(globals: GlobalOptions, args: Args) -> Result<i32> {
             for p in &partitions {
                 probe_tpl.add_partition_offset(&args.topic, *p, Offset::Offset(ts))?;
             }
-            let resolver: BaseConsumer = config.create()?;
+            let resolver = create_base_consumer(&config, &globals)?;
             let resolved = resolver.offsets_for_times(probe_tpl, timeout)?;
             for p in &partitions {
-                let elem = resolved
-                    .find_partition(&args.topic, *p)
-                    .ok_or_else(|| anyhow!("Missing offset for partition {p}"))?;
-                let offset = match elem.offset() {
+                let offset = match partition_offset(
+                    &resolved,
+                    &args.topic,
+                    *p,
+                    "Timestamp offset lookup",
+                )? {
                     Offset::Offset(o) => Offset::Offset(o),
                     _ => Offset::End,
                 };
@@ -289,7 +327,7 @@ pub async fn run(globals: GlobalOptions, args: Args) -> Result<i32> {
         }
     }
 
-    let consumer: StreamConsumer = config.create()?;
+    let consumer = create_stream_consumer(&config, &globals)?;
     consumer.assign(&tpl)?;
 
     let mut output: Box<dyn Write> = match &args.output {
@@ -347,29 +385,25 @@ pub async fn run(globals: GlobalOptions, args: Args) -> Result<i32> {
                     None => true,
                 };
 
-                // Reactive drain: pull whatever else is already buffered (up to
-                // a full bucket each), without blocking. `None` means the local
-                // fetch queue is empty right now, so the current pool is done.
-                while !stop {
-                    match stream.next().now_or_never() {
-                        Some(Some(Ok(m))) => {
-                            stop = matches!(
+                // Keep each pool finite so timeout and signal futures return to the outer select.
+                if !stop {
+                    stop = drain_ready(
+                        &mut stream,
+                        ctx.batch_limit.saturating_sub(1),
+                        |item| match item {
+                            Ok(m) => Ok(matches!(
                                 handle_message(&ctx, &m, &mut buckets, &mut snapshot_remaining, &mut index, output.as_mut())?,
                                 Flow::Stop
-                            );
-                        }
-                        Some(Some(Err(KafkaError::PartitionEOF(p)))) => {
-                            if args.snapshot {
-                                snapshot_remaining.remove(&p);
-                                if snapshot_remaining.is_empty() {
-                                    stop = true;
+                            )),
+                            Err(KafkaError::PartitionEOF(p)) => {
+                                if args.snapshot {
+                                    snapshot_remaining.remove(&p);
                                 }
+                                Ok(args.snapshot && snapshot_remaining.is_empty())
                             }
-                        }
-                        Some(Some(Err(err))) => return Err(err.into()),
-                        Some(None) => { stop = true; }
-                        None => break,
-                    }
+                            Err(err) => Err(err.into()),
+                        },
+                    )?;
                 }
 
                 flush_all(output.as_mut(), &args.topic, &mut buckets)?;
@@ -388,4 +422,112 @@ pub async fn run(globals: GlobalOptions, args: Args) -> Result<i32> {
         return Ok(1);
     }
     Ok(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{BTreeMap, HashSet};
+    use std::time::Duration;
+
+    use futures::stream;
+    use rdkafka::ClientConfig;
+    use rdkafka::consumer::BaseConsumer;
+    use rdkafka::message::{OwnedMessage, Timestamp};
+    use rdkafka::mocking::MockCluster;
+    use rdkafka::types::RDKafkaRespErr;
+
+    use super::{Ctx, Flow, drain_ready, handle_message, list_partitions};
+    use crate::formatter::Formatter;
+
+    fn handle_snapshot_offset(offset: i64, high: i64) -> (bool, usize) {
+        let format = Formatter::open("raw").expect("raw formatter creation failed");
+        let watermarks = BTreeMap::from([(0, (0, high))]);
+        let ctx = Ctx {
+            topic: "events",
+            snapshot: true,
+            skip: 0,
+            limit: u64::MAX,
+            batch_limit: 100,
+            watermarks: &watermarks,
+            format: &format,
+        };
+        let message = OwnedMessage::new(
+            Some(b"value".to_vec()),
+            None,
+            "events".to_string(),
+            Timestamp::NotAvailable,
+            0,
+            offset,
+            None,
+        );
+        let mut buckets = BTreeMap::new();
+        let mut remaining = HashSet::from([0]);
+        let mut index = 0;
+        let mut output = Vec::new();
+
+        let flow = handle_message(
+            &ctx,
+            &message,
+            &mut buckets,
+            &mut remaining,
+            &mut index,
+            &mut output,
+        )
+        .expect("snapshot message handling failed");
+        let bucket_size = buckets.get(&0).map_or(0, Vec::len);
+        (matches!(flow, Flow::Stop), bucket_size)
+    }
+
+    #[test]
+    fn list_partitions_propagates_topic_metadata_errors() {
+        const TOPIC: &str = "consume-forbidden";
+        let mock_cluster = MockCluster::new(1).expect("mock cluster creation failed");
+        mock_cluster
+            .topic_error(
+                TOPIC,
+                RDKafkaRespErr::RD_KAFKA_RESP_ERR_TOPIC_AUTHORIZATION_FAILED,
+            )
+            .expect("topic error injection failed");
+        let consumer: BaseConsumer = ClientConfig::new()
+            .set("bootstrap.servers", mock_cluster.bootstrap_servers())
+            .set("group.id", "kafq-consume-metadata-test")
+            .create()
+            .expect("consumer creation failed");
+
+        let error = list_partitions(&consumer, TOPIC, Duration::from_secs(2))
+            .expect_err("topic metadata error was ignored");
+
+        assert!(error.to_string().contains("metadata error"));
+    }
+
+    #[test]
+    fn snapshot_excludes_offset_at_captured_high_before_output() {
+        let (stopped, bucket_size) = handle_snapshot_offset(10, 10);
+
+        assert!(stopped);
+        assert_eq!(bucket_size, 0);
+    }
+
+    #[test]
+    fn snapshot_includes_last_offset_before_captured_high() {
+        let (stopped, bucket_size) = handle_snapshot_offset(9, 10);
+
+        assert!(stopped);
+        assert_eq!(bucket_size, 1);
+    }
+
+    #[test]
+    fn reactive_drain_respects_additional_item_limit() {
+        let mut stream = stream::iter(0..10);
+        let mut handled = 0;
+
+        let stopped = drain_ready(&mut stream, 3, |_| {
+            handled += 1;
+            Ok(false)
+        })
+        .expect("ready drain failed");
+
+        assert_eq!(handled, 3);
+        assert!(!stopped);
+    }
 }

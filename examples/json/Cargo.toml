@@ -8,8 +8,8 @@ crate-type = ["cdylib"]
 path = "src/lib.rs"
 
 [dependencies]
-wit-bindgen = "0.46"
-serde_json = { version = "1", default-features = false, features = ["alloc"] }
+wit-bindgen = "=0.46.0"
+serde_json = { version = "=1.0.149", default-features = false, features = ["alloc"] }
 
 [profile.release]
 opt-level = "s"

@@ -2,11 +2,10 @@ use std::io::stdout;
 
 use anyhow::{Result, bail};
 use clap::Args as ClapArgs;
-use rdkafka::admin::{AdminClient, AdminOptions, NewTopic, TopicReplication};
-use rdkafka::client::DefaultClientContext;
+use rdkafka::admin::{AdminOptions, NewTopic, TopicReplication};
 use serde::Serialize;
 
-use crate::client::{GlobalOptions, build_client_config};
+use crate::client::{GlobalOptions, build_client_config, create_admin};
 use crate::output::write_jsonl;
 
 #[derive(ClapArgs)]
@@ -30,7 +29,7 @@ struct CreateResult {
 
 pub async fn run(globals: GlobalOptions, args: Args) -> Result<i32> {
     let config = build_client_config(&globals)?;
-    let admin: AdminClient<DefaultClientContext> = config.create()?;
+    let admin = create_admin(&config, &globals)?;
     let opts = AdminOptions::new().request_timeout(Some(globals.operation_timeout()));
     let new_topic = NewTopic::new(
         &args.topic,

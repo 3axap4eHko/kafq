@@ -8,8 +8,8 @@ use rdkafka::TopicPartitionList;
 use rdkafka::consumer::{BaseConsumer, Consumer};
 use serde::Serialize;
 
-use crate::client::{GlobalOptions, build_client_config};
-use crate::commands::now_millis;
+use crate::client::{GlobalOptions, build_client_config, create_base_consumer};
+use crate::commands::{now_millis, partition_offset};
 use crate::output::write_jsonl;
 use crate::timestamp::parse_timestamp_ms;
 
@@ -65,7 +65,8 @@ pub async fn run(globals: GlobalOptions, args: Args) -> Result<i32> {
 
     if let Some(ref ts_raw) = args.timestamp {
         let ts = parse_timestamp_ms(ts_raw)?;
-        let consumer: BaseConsumer = config.set("group.id", format!("kafq-offsets-{}", now_millis())).create()?;
+        config.set("group.id", format!("kafq-offsets-{}", now_millis()));
+        let consumer = create_base_consumer(&config, &globals)?;
         let partitions = partition_ids(&consumer, &args.topic, timeout)?;
         let mut tpl = TopicPartitionList::new();
         for p in &partitions {
@@ -75,13 +76,11 @@ pub async fn run(globals: GlobalOptions, args: Args) -> Result<i32> {
 
         let mut out = stdout().lock();
         for p in &partitions {
-            let elem = resolved
-                .find_partition(&args.topic, *p)
-                .ok_or_else(|| anyhow::anyhow!("Missing partition {p} in offsets_for_times result"))?;
-            let offset = match elem.offset() {
-                Offset::Offset(o) => o.to_string(),
-                _ => "-1".to_string(),
-            };
+            let offset =
+                match partition_offset(&resolved, &args.topic, *p, "Timestamp offset lookup")? {
+                    Offset::Offset(o) => o.to_string(),
+                    _ => "-1".to_string(),
+                };
             write_jsonl(
                 &mut out,
                 &PartitionOffset {
@@ -94,7 +93,8 @@ pub async fn run(globals: GlobalOptions, args: Args) -> Result<i32> {
     }
 
     if let Some(ref group) = args.group {
-        let consumer: BaseConsumer = config.set("group.id", group).create()?;
+        config.set("group.id", group);
+        let consumer = create_base_consumer(&config, &globals)?;
         let partitions = partition_ids(&consumer, &args.topic, timeout)?;
         let mut tpl = TopicPartitionList::new();
         for p in &partitions {
@@ -103,14 +103,12 @@ pub async fn run(globals: GlobalOptions, args: Args) -> Result<i32> {
         let committed = consumer.committed_offsets(tpl, timeout)?;
         let mut offsets = Vec::new();
         for p in &partitions {
-            let elem = committed
-                .find_partition(&args.topic, *p)
-                .ok_or_else(|| anyhow::anyhow!("Missing committed offset for partition {p}"))?;
-            let offset_str = match elem.offset() {
-                Offset::Offset(o) => o.to_string(),
-                Offset::Invalid => "-1".to_string(),
-                other => format!("{other:?}"),
-            };
+            let offset_str =
+                match partition_offset(&committed, &args.topic, *p, "Committed offset lookup")? {
+                    Offset::Offset(o) => o.to_string(),
+                    Offset::Invalid => "-1".to_string(),
+                    other => format!("{other:?}"),
+                };
             offsets.push(PartitionOffset {
                 partition: *p,
                 offset: offset_str,
@@ -127,7 +125,8 @@ pub async fn run(globals: GlobalOptions, args: Args) -> Result<i32> {
         return Ok(0);
     }
 
-    let consumer: BaseConsumer = config.set("group.id", format!("kafq-offsets-{}", now_millis())).create()?;
+    config.set("group.id", format!("kafq-offsets-{}", now_millis()));
+    let consumer = create_base_consumer(&config, &globals)?;
     let partitions = partition_ids(&consumer, &args.topic, timeout)?;
 
     let mut out = stdout().lock();
